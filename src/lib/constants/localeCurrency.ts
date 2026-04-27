@@ -1,0 +1,41 @@
+/** Common ISO 4217 codes for picker UX (user can still type custom in settings later if we add advanced). */
+export const COMMON_CURRENCIES = [
+  'USD',
+  'EUR',
+  'GBP',
+  'JPY',
+  'CAD',
+  'AUD',
+  'CHF',
+  'CNY',
+  'MXN',
+  'BRL',
+  'INR',
+  'KRW',
+  'SEK',
+  'NOK',
+  'DKK',
+  'PLN',
+  'COP',
+  'ARS',
+] as const;
+
+/** Typical BCP 47 tags for locale formatting. */
+export const COMMON_LOCALE_TAGS = [
+  'en-US',
+  'en-GB',
+  'es-ES',
+  'es-MX',
+  'fr-FR',
+  'de-DE',
+  'it-IT',
+  'pt-BR',
+  'ja-JP',
+  'ko-KR',
+  'zh-CN',
+  'nl-NL',
+  'sv-SE',
+  'nb-NO',
+  'da-DK',
+  'pl-PL',
+] as const;
