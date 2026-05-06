@@ -1,12 +1,13 @@
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, UIManager, View } from 'react-native';
 import Animated, {
+  Easing,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -31,78 +32,87 @@ const TAB_LABELS: Record<string, string> = {
   spaces: 'Spaces',
 };
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+const TRACK_PADDING_H = 6;
+const BUBBLE_INSET_H = 5;
+const BUBBLE_TIMING_MS = 220;
+const BUBBLE_EASING = Easing.out(Easing.cubic);
 
 function TabItem({
   routeName,
   isFocused,
   onPress,
   colors,
-  radii,
 }: {
   routeName: string;
   isFocused: boolean;
   onPress: () => void;
   colors: ReturnType<typeof useTheme>['colors'];
-  radii: ReturnType<typeof useTheme>['radii'];
 }) {
-  const label =
-    TAB_LABELS[routeName] ?? routeName;
+  const label = TAB_LABELS[routeName] ?? routeName;
   const iconName = TAB_ICONS[routeName] ?? 'ellipse-outline';
 
-  const scale = useSharedValue(isFocused ? 1 : 0.94);
-  useEffect(() => {
-    scale.value = withSpring(isFocused ? 1 : 0.94, { damping: 16, stiffness: 220 });
-  }, [isFocused, scale]);
-
-  const iconAnim = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
   return (
-    <AnimatedPressable
+    <Pressable
       accessibilityRole="button"
       accessibilityState={isFocused ? { selected: true } : {}}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.tab,
-        {
-          opacity: pressed ? 0.88 : 1,
-          backgroundColor: isFocused ? 'rgba(93, 107, 255, 0.14)' : 'transparent',
-          borderRadius: radii.lg,
-        },
-      ]}>
-      <Animated.View style={iconAnim}>
+      style={({ pressed }) => [styles.tabCell, { opacity: pressed ? 0.92 : 1 }]}>
+      <View style={styles.iconSlot}>
         <Ionicons
           name={iconName}
           size={22}
           color={isFocused ? colors.accentPrimary : colors.textMuted}
         />
-      </Animated.View>
-      <Text
-        numberOfLines={2}
-        adjustsFontSizeToFit
-        minimumFontScale={0.82}
-        style={[
-          typography.tabLabel,
-          {
-            color: isFocused ? colors.textPrimary : colors.textMuted,
-            marginTop: 4,
-            textAlign: 'center',
-            fontSize: 10,
-            lineHeight: 12,
-          },
-        ]}>
-        {label}
-      </Text>
-    </AnimatedPressable>
+      </View>
+      <View style={styles.labelSlot}>
+        <Text
+          numberOfLines={2}
+          adjustsFontSizeToFit
+          minimumFontScale={0.82}
+          style={[
+            typography.tabLabel,
+            {
+              color: isFocused ? colors.textPrimary : colors.textMuted,
+              textAlign: 'center',
+              fontSize: 10,
+              lineHeight: 12,
+            },
+          ]}>
+          {label}
+        </Text>
+      </View>
+    </Pressable>
   );
 }
 
-export function GlassTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+export function GlassTabBar({ state, navigation }: BottomTabBarProps) {
   const { colors, radii } = useTheme();
   const insets = useSafeAreaInsets();
   const bottom = Math.max(insets.bottom, 12);
+
+  const [trackW, setTrackW] = useState(0);
+  const tabCount = state.routes.length;
+
+  const bubbleX = useSharedValue(0);
+  const bubbleW = useSharedValue(0);
+
+  useEffect(() => {
+    if (trackW <= 0 || tabCount === 0) return;
+    const innerW = trackW - TRACK_PADDING_H * 2;
+    const slotW = innerW / tabCount;
+    const w = Math.max(0, slotW - BUBBLE_INSET_H * 2);
+    const x = TRACK_PADDING_H + state.index * slotW + BUBBLE_INSET_H;
+    bubbleW.value = w;
+    bubbleX.value = withTiming(x, {
+      duration: BUBBLE_TIMING_MS,
+      easing: BUBBLE_EASING,
+    });
+  }, [state.index, trackW, tabCount, bubbleX, bubbleW]);
+
+  const bubbleStyle = useAnimatedStyle(() => ({
+    width: bubbleW.value,
+    transform: [{ translateX: bubbleX.value }],
+  }));
 
   return (
     <View
@@ -119,7 +129,20 @@ export function GlassTabBar({ state, descriptors, navigation }: BottomTabBarProp
             backgroundColor: Platform.OS === 'android' ? 'rgba(15, 20, 36, 0.72)' : undefined,
           },
         ]}>
-        <View style={styles.inner}>
+        <View
+          style={styles.track}
+          onLayout={(e) => setTrackW(e.nativeEvent.layout.width)}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.bubble,
+              {
+                backgroundColor: 'rgba(93, 107, 255, 0.22)',
+                borderRadius: radii.lg,
+              },
+              bubbleStyle,
+            ]}
+          />
           {state.routes.map((route, index) => {
             const isFocused = state.index === index;
 
@@ -141,7 +164,6 @@ export function GlassTabBar({ state, descriptors, navigation }: BottomTabBarProp
                 isFocused={isFocused}
                 onPress={onPress}
                 colors={colors}
-                radii={radii}
               />
             );
           })}
@@ -162,20 +184,40 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
   },
-  inner: {
+  track: {
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'stretch',
-    justifyContent: 'space-between',
     paddingVertical: 10,
-    paddingHorizontal: 6,
-    gap: 2,
+    paddingHorizontal: TRACK_PADDING_H,
+    minHeight: 56,
   },
-  tab: {
+  bubble: {
+    position: 'absolute',
+    left: 0,
+    top: 8,
+    bottom: 8,
+    zIndex: 0,
+  },
+  tabCell: {
     flex: 1,
+    zIndex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 52,
-    paddingVertical: 6,
+    minWidth: 0,
+  },
+  iconSlot: {
+    height: 28,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  labelSlot: {
+    marginTop: 2,
+    width: '100%',
+    minHeight: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 2,
   },
 });
