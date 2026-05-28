@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import React from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/Button';
 import { GlassCard } from '@/components/ui/GlassCard';
+import { useAuth } from '@/features/auth/AuthContext';
 import { settingsRepository } from '@/features/settings/settingsRepository';
 import { useTheme } from '@/lib/theme/ThemeProvider';
 import { typography } from '@/lib/theme/typography';
@@ -14,31 +15,52 @@ export default function AccountModal() {
   const router = useRouter();
   const db = useSQLiteContext();
   const { colors, spacing } = useTheme();
+  const { user, cloudConfigured, signOut } = useAuth();
+  const signedIn = Boolean(user);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['bottom']}>
       <View style={{ padding: spacing.lg }}>
         <Text style={typography.hero}>Account</Text>
         <Text style={[typography.bodyMuted, { marginTop: spacing.sm, marginBottom: spacing.xl }]}>
-          You are using local-only mode. Sign-in and sync will be available in Phase 2 (Supabase).
+          {signedIn
+            ? 'You are signed in. Cloud sync of expenses will arrive in a later step.'
+            : cloudConfigured
+              ? 'You are in local-only mode. Sign in below to link this device to your Supabase account.'
+              : 'Add Supabase keys to .env to enable cloud sign-in.'}
         </Text>
 
         <GlassCard>
           <Text style={[typography.subtitle, { marginBottom: spacing.sm }]}>Status</Text>
-          <Text style={typography.bodyMuted}>Data stored on this device (SQLite).</Text>
+          <Text style={typography.bodyMuted}>
+            {signedIn
+              ? `Signed in as ${user?.email ?? user?.id}`
+              : 'Data stored on this device (SQLite).'}
+          </Text>
         </GlassCard>
 
-        <View style={{ marginTop: spacing.xl }}>
-          <Button
-            title="Sign up or sign in (soon)"
-            onPress={() =>
-              Alert.alert(
-                'Coming in Phase 2',
-                'Email/password and Google sign-in will connect to Supabase with optional sync.',
-              )
-            }
-          />
-        </View>
+        {signedIn ? (
+          <View style={{ marginTop: spacing.xl }}>
+            <Button
+              title="Sign out"
+              variant="secondary"
+              onPress={async () => {
+                await signOut();
+                router.back();
+              }}
+            />
+          </View>
+        ) : (
+          <View style={{ marginTop: spacing.xl }}>
+            <Button
+              title="Sign in or sign up"
+              onPress={() => {
+                router.back();
+                router.push('/(onboarding)/entry');
+              }}
+            />
+          </View>
+        )}
 
         <View style={{ marginTop: spacing.md }}>
           <Button

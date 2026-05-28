@@ -275,11 +275,25 @@ For **in-app** Google on iOS/Android, Google often wants **separate** OAuth clie
 
 ---
 
-### Step C3 — Site URL & redirects (important for deep links later)
+### Step C3 — Site URL & redirects (Expo app)
 
 1. **Authentication** → **URL configuration**.
-2. **Site URL**: for dev, `exp://` or your Expo dev URL; for production, your real app URL.
-3. **Redirect URLs**: add patterns Supabase docs recommend for Expo (we will align these when implementing auth screens).
+2. **Site URL**: `http://localhost:3000` is fine for web testing; for a **mobile-only** app it is not used for in-app OAuth the same way. You can set **`expensetracker://`** as Site URL if you prefer (must match your `app.json` **scheme**).
+3. **Redirect URLs** (required for **Google** and for **PKCE email magic links**): add every URL the app uses when returning from the browser.
+
+   **Always add** (matches `app.json` → `"scheme": "expensetracker"` and `Linking.createURL('auth/callback')`):
+
+   `expensetracker://auth/callback`
+
+   **Expo dev build** (development client, not Expo Go): OAuth returns to your **custom scheme** from `app.json` (`expensetracker`). You already added:
+
+   `expensetracker://auth/callback`
+
+   That is usually sufficient. If Google or Supabase still reports **`redirect_uri_mismatch`**, log `getOAuthRedirectUri()` once (or read the `redirect_uri` in the error) and add **that exact string** under **Redirect URLs** — it must match character-for-character.
+
+   *(Expo Go uses different `exp://…` URLs; you are not using Expo Go, so you should not need those.)*
+
+   You can add **several** redirect URLs; Supabase allows a list.
 
 ---
 
