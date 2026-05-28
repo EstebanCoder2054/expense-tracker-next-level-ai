@@ -1,3 +1,4 @@
+import 'react-native-url-polyfill/auto';
 import 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
@@ -7,6 +8,7 @@ import { SQLiteProvider } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { AuthProvider } from '@/features/auth/AuthContext';
 import { SelectedDateProvider } from '@/features/home/selectedDateContext';
 import { runMigrations } from '@/lib/db/migrations';
 import { seedCategoriesIfEmpty } from '@/lib/db/seedCategories';
@@ -28,8 +30,9 @@ export default function RootLayout() {
           }}>
           <ThemeProvider>
             <StatusBar style="light" />
-            <SelectedDateProvider>
-              <Stack
+            <AuthProvider>
+              <SelectedDateProvider>
+                <Stack
                 screenOptions={{
                   headerStyle: { backgroundColor: palette.background },
                   headerTintColor: palette.textPrimary,
@@ -60,8 +63,9 @@ export default function RootLayout() {
                   name="modals/add-category"
                   options={{ presentation: 'modal', title: 'Category', headerShown: true }}
                 />
-              </Stack>
-            </SelectedDateProvider>
+                </Stack>
+              </SelectedDateProvider>
+            </AuthProvider>
           </ThemeProvider>
         </SQLiteProvider>
       </QueryClientProvider>
