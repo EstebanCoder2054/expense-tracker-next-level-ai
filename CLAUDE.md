@@ -2,6 +2,70 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## File tree
+
+Generated tree (excludes `node_modules/`, `.git/`, `ios/`, `android/`, `.expo/`, `.vscode/`, `assets/`):
+
+```
+.
+├── CLAUDE.md
+├── app.json                          # Expo config: scheme=expensetracker, new arch, typed routes
+├── tsconfig.json                     # strict TS, @/* → src/*
+├── package.json
+├── package-lock.json
+├── expo-env.d.ts
+├── .env / .env.example               # EXPO_PUBLIC_SUPABASE_* + DATABASE_URL (.env gitignored)
+│
+├── app/                              # expo-router file-based routes
+│   ├── _layout.tsx                   # Root provider stack + Stack screens
+│   ├── index.tsx                     # Auth/onboarding redirect gate
+│   ├── +html.tsx                     # Web HTML shell
+│   ├── +not-found.tsx
+│   ├── (onboarding)/                 # _layout, entry, slides, preferences
+│   ├── (tabs)/                       # _layout (GlassTabBar) + home, expenses, reports, spaces
+│   ├── expense/                      # _layout, [id], add  (modal-presented)
+│   └── modals/                       # account, add-category, calendar, capture
+│
+├── src/
+│   ├── components/                   # Presentational, reused across features
+│   │   ├── ui/                       # Button, GlassCard, Screen, TextField
+│   │   ├── navigation/GlassTabBar.tsx
+│   │   ├── home/HeroAccent.tsx
+│   │   ├── expenses/                 # ExpenseRow, SwipeableExpenseRow
+│   │   └── schedule/WeekCalendar.tsx
+│   │
+│   ├── features/                     # Screen-level units, paired with repositories
+│   │   ├── auth/AuthContext.tsx
+│   │   ├── capture/CaptureModalScreen.tsx
+│   │   ├── expenses/                 # ExpensesListScreen, ExpenseEditorScreen, expenseRepository
+│   │   ├── home/                     # HomeScreen, selectedDateContext
+│   │   ├── onboarding/               # EntryScreen, OnboardingSlidesScreen, PreferencesScreen
+│   │   └── settings/settingsRepository.ts
+│   │
+│   ├── hooks/useExpenseQueries.ts    # React Query wrappers around repositories
+│   ├── types/domain.ts               # Expense, Category, AppPreferences, ExpenseKind
+│   │
+│   └── lib/
+│       ├── auth/                     # oauthRedirect, parseOAuthReturn
+│       ├── constants/localeCurrency.ts
+│       ├── db/                       # SQLite migrations + seedCategories
+│       ├── query/queryClient.ts      # QueryClient + queryKeys
+│       ├── supabase/                 # client (lazy, nullable), env
+│       ├── theme/                    # ThemeProvider (dark-only), tokens, typography
+│       ├── utils/                    # date helpers, id (createId)
+│       └── validation/expense.ts     # zod schemas
+│
+├── supabase/
+│   ├── config.toml
+│   └── migrations/
+│       └── 20260205160000_phase2_core_schema.sql  # profiles, user_preferences, categories, expenses + RLS
+│
+├── docs/PHASE2.md                    # Supabase setup + planned sync work
+│
+├── components/__tests__/             # ⚠ Expo-template leftover, ignore
+└── constants/                        # ⚠ Empty template leftover, ignore
+```
+
 ## Commands
 
 ```bash
