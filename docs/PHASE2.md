@@ -1,367 +1,199 @@
-# Phase 2 — Supabase backend (monorepo)
+# Phase 2 — Auth + Cloud Foundation
 
-This repo keeps **everything in one place**:
-
-| Area | Location |
-|------|----------|
-| Mobile app (Expo) | `app/`, `src/` |
-| Database schema, RLS, triggers | `supabase/migrations/` |
-| Local Supabase config | `supabase/config.toml` |
-| Optional later: Edge Functions | `supabase/functions/` |
-
-There is no separate microservice repo: **Postgres + Auth + Row Level Security** on Supabase *is* the backend. The Expo app will call Supabase with the **publishable** or **anon** key (safe because RLS enforces per-user data).
-
-### Do I need to “download Supabase”?
-
-**No separate install is required** for what you’re doing:
-
-| Tool | What it is |
-|------|-------------|
-| **`npx supabase@latest …`** | Runs the **Supabase CLI** from npm when you need it (login, link, `db push`). No permanent “Supabase app” install required. |
-| **Browser dashboard** | [supabase.com](https://supabase.com) → your project. Use this for tables, Auth, SQL Editor, API keys — **this is enough** for day-to-day. |
-
-Optional: Homebrew `brew install supabase/tap/supabase` if you prefer a global `supabase` command instead of `npx`.
-
-### `db push` notices like “trigger does not exist, skipping”
-
-That comes from `DROP TRIGGER IF EXISTS` on a **first** migration run — **normal**, not an error. Your **Table Editor** showing `profiles`, `categories`, `expenses`, `user_preferences` means the schema applied.
+> **Status: 🟡 In progress.** Auth is implemented end-to-end (Supabase client, session restore, email + Google, SecureStore persistence, route guards). **Data sync — pushing/pulling SQLite expenses/categories to Supabase — is NOT done yet.**
+>
+> See also:
+> - [PHASE2_SETUP.md](PHASE2_SETUP.md) — the operational Supabase dashboard walkthrough (account, schema push, providers, redirect URLs, env vars). Read this for hands-on setup.
+> - [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — overall vision, stack, principles.
 
 ---
 
-## Naming: `EXPO_PUBLIC_*` vs `NEXT_PUBLIC_*`
+## 1. Phase 2 Scope
 
-- **`NEXT_PUBLIC_*`** is for **Next.js** only.
-- This repo is **Expo**: use **`EXPO_PUBLIC_*`** so Metro bundles those values into the client.
-- The Supabase project URL must start with **`https://`** (not `http`).
+**Auth + cloud foundation.** Goals:
 
----
-
-## Part A — Create the Supabase project (dashboard)
-
-Do these steps once per environment (e.g. one project for **dev**, another later for **production**).
-
-### Step A1 — Account
-
-1. Open [https://supabase.com](https://supabase.com) and sign in (GitHub is fine).
-2. Click **New project**.
-
-### Step A2 — Organization & project name
-
-1. Pick an **organization** (personal or team).
-2. **Name**: e.g. `expense-tracker-dev`.
-3. **Database password**: generate a strong password and **save it in a password manager**. You rarely type it day to day; the CLI and dashboard use other keys. You need it for direct Postgres access (optional).
-
-### Step A3 — Region
-
-1. Choose a **region** close to you or your users (latency matters for the app).
-2. **Free tier** is enough to start.
-
-### Step A4 — Create & wait
-
-1. Click **Create new project**.
-2. Wait until status is **Healthy** (can take 1–2 minutes).
-
-### Step A5 — Note these values (you will need them)
-
-1. **Project Settings** (gear) → **Data API** / **API**:
-   - **Project URL** → `EXPO_PUBLIC_SUPABASE_URL` (must be `https://...supabase.co`).
-   - **Publishable key** (`sb_publishable_...`) → `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
-   - If the JS client asks for a JWT-style key, use the **anon** / **legacy anon** key → `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
-2. **Never** put the **secret** / **service_role** key in the Expo app (server-only).
-
-### Step A6 — Optional: direct Postgres string (CLI / tools)
-
-Use **Project Settings → Database** connection string, or:
-
-`postgresql://postgres:[YOUR-PASSWORD]@db.<PROJECT_REF>.supabase.co:5432/postgres`
-
-Put that in `.env` as `DATABASE_URL` (see `.env.example`). Replace `[YOUR-PASSWORD]` with the **database password** you set when creating the project.
-
-### Project creation checklist (your screenshots)
-
-- **Enable Data API**: ON — fine (needed for `supabase-js`).
-- **Automatically expose new tables**: ON is OK for dev; we still define explicit **RLS** in migrations.
-- **Enable automatic RLS**: OFF is OK — our migration **manually** enables RLS on each table.
+- Integrate Supabase project
+- Google auth
+- Email/password auth
+- Profile/session handling
+- Local-to-auth migration strategy scaffolding
+- Remote profile basics
+- Protected app flow
+- **Preserve local mode support** (a user who chose "Continue locally" must still work without an account)
 
 ---
 
-## Part B — Apply the database schema (“Step 3”)
+## 2. Numbered Phase 2 Plan (the order we agreed on)
 
-**What this means:** Right now Supabase only has empty Postgres + Auth. **Applying the schema** creates our tables (`profiles`, `user_preferences`, `categories`, `expenses`), **RLS policies**, and **triggers** by running the SQL in `supabase/migrations/`.
+1. **Create Supabase project + base schema** (profiles, user preferences, categories, expenses) with RLS scoping every table to `user_id`.
+2. **Add Supabase client** (lazy, nullable — app must run without env vars) and env wiring (`EXPO_PUBLIC_SUPABASE_*`).
+3. **Auth context** — session restore from SecureStore, sign-in, sign-up, sign-out, Google OAuth.
+4. **Wire UI** — Entry screen (email + password + Google + Continue locally), Account modal (signed-in state + sign out).
+5. **Route guard** in `app/index.tsx` — auth-aware redirect after waiting for `initialized`.
+6. **Local↔cloud migration scaffolding** — `entry_mode` field (`local` / `pending_cloud`) already exists from Phase 1; use it to flag "user has local data to upload after sign-in."
+7. **Schema parity** — ensure local SQLite shape matches the cloud table shape (it does; both use `TEXT` IDs to align with `createId()`).
+8. **Data sync — upload, then download.** **NOT IMPLEMENTED YET** (see §6 below).
 
-**Why CLI:** One command (`db push`) applies the same migration files your repo uses — reproducible and matches production later.
+A slimmer Phase 2 cut commonly used: **steps 1–6 + step 8 upload-only first**, then download + second-device + migration polish as a follow-up slice.
 
-You can do **either** B1 (recommended) **or** B2 (SQL Editor).
+---
 
-### Step B1 — Supabase CLI + linked project (recommended)
+## 3. What Is Implemented (as of this writing)
 
-**B1.1 — Install CLI**
+### Packages added
 
-- macOS (Homebrew): `brew install supabase/tap/supabase`
-- Or use without global install: `npx supabase@latest --help`
+- `@supabase/supabase-js`
+- `expo-secure-store`
+- `expo-linking` (replaced `expo-auth-session` — see §5)
+- `react-native-url-polyfill`
 
-**B1.2 — Log in**
+### Files added / changed
+
+| File | Purpose |
+|---|---|
+| `src/lib/supabase/env.ts` | Reads `EXPO_PUBLIC_SUPABASE_URL` + `EXPO_PUBLIC_SUPABASE_ANON_KEY` (falls back to publishable key). Returns `configured: false` if missing. |
+| `src/lib/supabase/client.ts` | Lazy, **nullable** singleton client with **SecureStore** session persistence. Every consumer must handle the `null` case — app is designed to run without cloud credentials. |
+| `src/features/auth/AuthContext.tsx` | Session restore, `signInWithPassword`, `signUpWithPassword` (returns `hasSession` when email-confirm is off), `signInWithGoogle` (in-app browser + PKCE / hash handling), `signOut`, `initialized` flag. |
+| `src/lib/auth/oauthRedirect.ts` | Builds the OAuth redirect URI using **`expo-linking`** + the `expensetracker` scheme. |
+| `src/lib/auth/parseOAuthReturn.ts` | Handles the OAuth return URL — `exchangeCodeForSession` / `setSession`. |
+| `app/_layout.tsx` | `react-native-url-polyfill` imported first, then **`AuthProvider`** wrapping the stack (inside `SQLiteProvider`). |
+| `app/index.tsx` | Waits for auth `initialized`. Signed in + onboarding incomplete → preferences. Signed in + onboarding complete → home. Signed out → onboarding/home as Phase 1. |
+| `app/(onboarding)/EntryScreen` | Email + password, **Sign in**, **Create account**, **Google**, **Continue locally**. Sets `entryMode = 'pending_cloud'` after cloud auth. |
+| `app/modals/account.tsx` | Signed-in: shows email + **Sign out**. Signed-out: **Sign in or sign up** → entry route. |
+| `supabase/migrations/20260205160000_phase2_core_schema.sql` | `profiles`, `user_preferences`, `categories`, `expenses` + RLS. `categories.id` and `expenses.id` are **`TEXT`** (not UUID) to match `createId()` for sync. |
+| `docs/PHASE2_SETUP.md` | Full Supabase dashboard walkthrough (renamed from `docs/PHASE2.md`). |
+| `.env.example` | `EXPO_PUBLIC_SUPABASE_*` + `DATABASE_URL` template. |
+
+### Behaviors that work end-to-end
+
+- Cold start with no credentials → `getSupabaseEnv().configured === false`, app falls back to local mode cleanly.
+- Cold start with credentials → session is restored from SecureStore.
+- Email sign-up → if Supabase has "Confirm email" **off**, session is returned immediately and the app routes to home.
+- Email sign-in → session stored in SecureStore.
+- Google sign-in → opens the in-app browser, returns via `expensetracker://auth/callback`, session exchanged and stored.
+- Sign-out from the Account modal clears the session.
+- `npx tsc --noEmit` passes.
+
+---
+
+## 4. Key Decisions Made During Phase 2
+
+### Session storage: SecureStore, not AsyncStorage
+
+`expo-secure-store` is used (NOT AsyncStorage). Keys are encrypted at rest on device. The Supabase client is configured to use SecureStore as the auth storage adapter.
+
+### Supabase client is lazy + nullable
+
+`src/lib/supabase/client.ts` returns `null` when env vars are missing (`getSupabaseEnv().configured === false`). **Every consumer must handle the null case.** This keeps Phase 1 ("local-only with no cloud") working even after Phase 2 ships — a deliberate principle from [PROJECT_CONTEXT.md §13](PROJECT_CONTEXT.md).
+
+### ID strategy: `TEXT` IDs everywhere
+
+`categories.id` and `expenses.id` are `TEXT` (not UUID) in Postgres because SQLite generates them with `createId()`. This is **intentional for sync** — the same row keeps the same id locally and in the cloud, so upload/download is idempotent. Don't "fix" this to UUID.
+
+### `EXPO_PUBLIC_*`, not `NEXT_PUBLIC_*`
+
+Only `EXPO_PUBLIC_*` vars are bundled into the Expo client. The Supabase publishable/anon key is safe to ship because **RLS is enforced server-side**. Service-role keys and `DATABASE_URL` must **never** get an `EXPO_PUBLIC_` prefix.
+
+### Google OAuth uses `expo-linking`, not `expo-auth-session`
+
+We started with `expo-auth-session` and **removed it.** It pulls a nested `expo-crypto` that fails to compile with the current Expo SDK (Swift `StaticAsyncFunction` errors). Replaced with `expo-linking`'s `Linking.createURL('auth/callback', { scheme: 'expensetracker' })` in `src/lib/auth/oauthRedirect.ts`. CocoaPods was refreshed (`ExpoCrypto` removed from the iOS project).
+
+### `expensetracker://auth/callback` must stay in the Supabase Redirect URLs
+
+The `expensetracker://` scheme in `app.json` and the Supabase **Authentication → URL configuration → Redirect URLs** list must stay in sync. Allow-listed entry for the dev build: `expensetracker://auth/callback`. If Google OAuth says `redirect_uri_mismatch`, add **exactly** the URI from the error (or log `getOAuthRedirectUri()` once) — multiple entries are allowed.
+
+### Dev build only — no Expo Go assumptions
+
+The `expensetracker://` scheme requires a dev build. `expo-auth-session`'s `exp://…/--/auth/callback` Expo Go URL is **not needed**. Docs and code comments were updated to reflect this.
+
+### Provider order in `app/_layout.tsx`
+
+The order matters (later providers can use earlier ones):
+
+```
+GestureHandlerRootView
+  → QueryClientProvider
+    → SQLiteProvider
+      → ThemeProvider
+        → AuthProvider
+          → SelectedDateProvider
+            → Stack
+```
+
+`react-native-url-polyfill` is imported **first** at the top of `_layout.tsx`, before anything else — Supabase's fetch path needs it on RN.
+
+### Auth state and onboarding state are independent
+
+A signed-out user who finished onboarding still lands on home. A signed-in user who hasn't done preferences is routed through onboarding's preferences screen. The route gate (`app/index.tsx`) checks both `AuthContext.initialized` and `app_settings.onboarding_complete`.
+
+---
+
+## 5. Trouble We've Hit (and How We Solved It)
+
+- **`expo-auth-session` broke the iOS build.** Nested `expo-crypto` failed Swift compile (`StaticAsyncFunction`). **Fix:** removed `expo-auth-session`, switched to `expo-linking`. Pods refreshed.
+- **First iOS build needed `iPhone 17` simulator targeting.** Used `npx expo run:ios --device "iPhone 17"`. To list available sims: `xcrun simctl list devices available | grep iPhone`.
+- **Trigger creation in the migration.** Some Supabase Postgres versions error on `EXECUTE PROCEDURE` vs `EXECUTE FUNCTION`. Both work depending on PG version; if `db push` complains, swap the keyword. See [PHASE2_SETUP.md](PHASE2_SETUP.md) troubleshooting section.
+- **`db push` "trigger does not exist, skipping"** notices are informational — first-time push of a migration that drops/creates a trigger will report this on the drop step; safe to ignore.
+- **Env vars not loading after `.env` edits** → `npx expo start -c` once to clear the cache.
+
+---
+
+## 6. What's Left in Phase 2 (NOT done yet)
+
+The big one: **data sync between SQLite and Supabase.**
+
+Specifically:
+
+1. **Upload after sign-in / sign-up.** When `entry_mode === 'pending_cloud'`, push the local `categories` and `expenses` rows to Supabase tagged with the new `user_id`. Mark `entry_mode = 'synced'` (or similar) once done.
+2. **Download on session restore.** On a second device (or after sign-in on a fresh install), pull the user's cloud rows into local SQLite.
+3. **Conflict rules.** Since IDs are stable, "last-write-wins by `updated_at`" is the simplest workable rule. Document it before implementing.
+4. **Realtime (optional, deferred).** Not in Phase 2 unless we specifically pull it forward.
+5. **Migration polish.** Edge cases: user signs out → local data stays? User signs in to a *different* account on the same device → what happens? Document the decisions before implementing.
+
+This is **Part F** in [PHASE2_SETUP.md](PHASE2_SETUP.md) — the setup guide describes what we're about to build; the code doesn't exist yet.
+
+---
+
+## 7. Forward-Looking Notes / Open Questions
+
+- **Anonymous / local-only users:** stay SQLite-only until they sign in. Sign-in then triggers the upload step. Decision was made — do **not** require sign-in for Phase 2.
+- **Email-only first, Google later** is an acceptable shipping cut if Google OAuth setup proves slow — the auth code already handles both.
+- **Profile table** is in the schema but profile-editing UI is minimal. Could extend with display name, avatar, etc. in a later phase.
+- **Sentry / monitoring** still not wired (per Phase 2 scope — deliberate).
+
+---
+
+## 8. Phase 2 Run / Dev Workflow
+
+Same as Phase 1 (dev build only, not Expo Go), plus:
 
 ```bash
-npx supabase@latest login
+# Supabase CLI (via npx — no global install)
+npm run supabase:login
+npm run supabase:link        # then pass --project-ref <ref>
+npm run db:push              # apply supabase/migrations/*.sql to the linked remote DB
 ```
 
-Opens the browser to create an access token; paste it back in the terminal.
+When env vars change in `.env`, restart Metro with `-c` once: `npx expo start -c`.
 
-**B1.3 — Link this repo to your cloud project**
+To test the full auth loop:
 
-From the **ExpenseTracker** root:
-
-```bash
-cd /path/to/ExpenseTracker
-npx supabase@latest link --project-ref <YOUR_PROJECT_REF>
-```
-
-Your **project ref** is the subdomain in `https://<ref>.supabase.co` (e.g. `ntleambfvzgssmknfpvb`).
-
-The CLI may ask for the **database password** you set when creating the project — same password as in `DATABASE_URL`.
-
-**B1.4 — Push migrations**
-
-```bash
-npx supabase@latest db push
-```
-
-This runs all files in `supabase/migrations/` against the linked remote database.
-
-**B1.5 — Confirm in dashboard**
-
-- **Table Editor**: you should see `profiles`, `user_preferences`, `categories`, `expenses`.
-- **Authentication** → **Policies**: RLS policies should exist on those tables.
+1. Replay onboarding (from Home) or clear app data so you reach Entry again.
+2. **Email:** sign up / sign in. If Supabase has "Confirm email" on, check inbox after sign-up.
+3. **Google:** opens the browser, returns to the app after consent.
+4. **Continue locally** still skips cloud auth entirely.
+5. **Account modal:** shows "Signed in as …" + **Sign out** when logged in.
 
 ---
 
-### Step B2 — SQL Editor only (no CLI)
+## 9. Security Reminders
 
-If you prefer not to use the CLI yet:
-
-1. Dashboard → **SQL Editor** → **New query**.
-2. Open the file `supabase/migrations/20260205160000_phase2_core_schema.sql` in this repo.
-3. Copy **the entire file** into the editor.
-4. Click **Run**.
-
-If you see an error about `EXECUTE FUNCTION`, try replacing:
-
-`EXECUTE FUNCTION` → `EXECUTE PROCEDURE`
-
-(Postgres version differences; Supabase usually accepts `EXECUTE FUNCTION`.)
+- DB password / service-role keys must **never** appear in code, `.env` files committed to git, or chat. If they have, **rotate them immediately** in the Supabase dashboard and update `.env`.
+- `.env` is gitignored; `.env.example` is the committed template.
+- RLS is the line of defense — the publishable/anon key in the bundle is safe **only because** RLS is enforced on every table. Don't add tables without RLS policies.
 
 ---
 
-## Part C — Authentication providers
+## 10. Handoff to Phase 3
 
-### Step C0 — User signups (your “third image”: Authentication settings)
-
-Under **Authentication → Sign In / Providers** (or **Configuration → Signups** depending on dashboard version):
-
-| Setting | Your screenshot | What it means |
-|--------|-------------------|----------------|
-| **Allow new users to sign up** | ON | Users can register — keep ON for Phase 2. |
-| **Confirm email** | ON | Users must click the link in email before first sign-in. **Good for production.** For faster Expo testing, you can turn **Confirm email** OFF temporarily (remember to turn it back ON later). |
-| **Allow anonymous sign-ins** | OFF | Fine unless we explicitly add anonymous auth later. |
-| **Allow manual linking** | OFF | Fine for now. |
-
-Click **Save changes** if the dashboard asks.
-
----
-
-### Step C1 — Email provider
-
-1. **Authentication** → **Providers** → **Email**.
-2. Ensure the Email provider is **enabled**.
-
----
-
-### Step C2 — Google Sign-in (full walkthrough)
-
-Goal: Google Cloud trusts Supabase’s **callback URL**, and Supabase has your **Web client** ID + secret.
-
-**Copy this callback URL** (replace `<ref>` with your project ref if different):
-
-`https://<ref>.supabase.co/auth/v1/callback`  
-Example: `https://ntleambfvzgssmknfpvb.supabase.co/auth/v1/callback`
-
----
-
-#### C2.1 — Pick a Google Cloud project
-
-1. Open [Google Cloud Console](https://console.cloud.google.com/).
-2. Top bar → **project dropdown** → select an existing project **or** **New project** → name it (e.g. `ExpenseTracker`) → **Create**.
-
----
-
-#### C2.2 — OAuth consent screen (required before credentials)
-
-1. Left menu: **APIs & Services** → **OAuth consent screen**.
-2. **User type**: choose **External** (unless you use Google Workspace with Internal only).
-3. **Create** and fill the wizard:
-   - **App name** (shown to users): e.g. `Expense Tracker`.
-   - **User support email**: your email.
-   - **Developer contact email**: your email.
-4. **Scopes** (step 2): defaults are usually fine → **Save and continue**.
-5. **Test users** (step 3, while app is in **Testing**): **Add users** → add **every Gmail** that will try Google sign-in (including yours). **Save and continue**.
-6. **Summary** → **Back to dashboard**.
-
-Until you **Publish** the app, only **test users** can complete Google login. That’s fine for development.
-
----
-
-#### C2.3 — Enable Google Identity API (if prompted)
-
-Some flows need the Google+ API / People API — if Google asks, enable **Google Identity Services** or follow any “Enable API” link from the error page. Often **Credentials** creation works without extra steps.
-
----
-
-#### C2.4 — Create the **Web** OAuth client (for Supabase)
-
-1. **APIs & Services** → **Credentials**.
-2. **+ Create credentials** → **OAuth client ID**.
-3. If Google says configure consent screen first, complete **C2.2** above.
-4. **Application type**: **Web application**.
-5. **Name**: e.g. `Supabase Web`.
-6. **Authorized JavaScript origins** → **Add URI**:
-   - `https://ntleambfvzgssmknfpvb.supabase.co`  
-   (your Supabase host only — **no** path, **no** trailing slash issues; use `https`.)
-7. **Authorized redirect URIs** → **Add URI**:
-   - `https://ntleambfvzgssmknfpvb.supabase.co/auth/v1/callback`  
-   (**must match Supabase’s Callback URL exactly**, character for character.)
-8. **Create**.
-9. A dialog shows **Client ID** and **Client secret** → copy both (secret is shown once; if you lose it, create a new secret in Google).
-
----
-
-#### C2.5 — Paste into Supabase
-
-1. Supabase → **Authentication** → **Providers** → **Google**.
-2. Turn **Enable Sign in with Google** **ON**.
-3. **Client IDs**: paste the **Web client** Client ID (long string ending often with `.apps.googleusercontent.com`).
-4. **Client Secret**: paste the **Client secret** from the same dialog.
-5. **Skip nonce checks** / **Allow users without an email**: leave **OFF** unless you hit a known platform bug (we can adjust when Expo is wired).
-6. **Save**.
-
----
-
-#### C2.6 — Supabase URL configuration (avoid redirect errors)
-
-1. **Authentication** → **URL configuration**.
-2. **Site URL**: for now you can use `http://localhost:3000` or your real site; for Expo dev we’ll add more redirect URLs when implementing the app.
-3. **Redirect URLs**: add the same callback if listed, and any **Expo** URLs Supabase docs list for your flow (we’ll add `exp://` patterns in the app integration step).
-
----
-
-#### C2.7 — Quick tests
-
-- **Google Cloud** → **Credentials** → open your OAuth client → confirm **redirect URI** is exactly Supabase’s `/auth/v1/callback`.
-- **Supabase** → **Authentication** → **Users**: after a successful test sign-in, a user row should appear.
-
-**Common errors**
-
-| Error | Fix |
-|--------|-----|
-| `redirect_uri_mismatch` | Redirect URI in Google must **exactly** match Supabase’s callback URL (scheme, host, path). |
-| `Access blocked: App has not completed verification` | App in **Testing** → add your Gmail under **Test users** on the consent screen. |
-| `invalid_client` | Wrong Client ID/secret pasted in Supabase; re-copy from Google. |
-
----
-
-#### C2.8 — Expo / native Google later (optional next phase)
-
-For **in-app** Google on iOS/Android, Google often wants **separate** OAuth clients (iOS bundle ID, Android package + SHA-256). You can add those **Client IDs** in Supabase’s **Client IDs** field **comma-separated**, alongside the Web client ID. We’ll do that when we implement the auth screens.
-
----
-
-### Step C3 — Site URL & redirects (Expo app)
-
-1. **Authentication** → **URL configuration**.
-2. **Site URL**: `http://localhost:3000` is fine for web testing; for a **mobile-only** app it is not used for in-app OAuth the same way. You can set **`expensetracker://`** as Site URL if you prefer (must match your `app.json` **scheme**).
-3. **Redirect URLs** (required for **Google** and for **PKCE email magic links**): add every URL the app uses when returning from the browser.
-
-   **Always add** (matches `app.json` → `"scheme": "expensetracker"` and `Linking.createURL('auth/callback')`):
-
-   `expensetracker://auth/callback`
-
-   **Expo dev build** (development client, not Expo Go): OAuth returns to your **custom scheme** from `app.json` (`expensetracker`). You already added:
-
-   `expensetracker://auth/callback`
-
-   That is usually sufficient. If Google or Supabase still reports **`redirect_uri_mismatch`**, log `getOAuthRedirectUri()` once (or read the `redirect_uri` in the error) and add **that exact string** under **Redirect URLs** — it must match character-for-character.
-
-   *(Expo Go uses different `exp://…` URLs; you are not using Expo Go, so you should not need those.)*
-
-   You can add **several** redirect URLs; Supabase allows a list.
-
----
-
-## Part D — App environment variables (Expo)
-
-### Step D1 — Create `.env` in the project root (not committed)
-
-Copy from `.env.example`. Typical entries:
-
-```env
-EXPO_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
-EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-# Optional fallback:
-# EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-
-SUPABASE_PROJECT_REF=xxxx
-DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.xxxx.supabase.co:5432/postgres
-```
-
-Use **`EXPO_PUBLIC_*`** only for values that must be readable by the app. Keep **database password** and **service role** out of `EXPO_PUBLIC_*`.
-
-### Step D2 — EAS / production builds
-
-For **EAS Build**, add the same variables as **secrets** or **env** in `eas.json` / EAS dashboard so production builds see them.
-
----
-
-## Part E — What the first migration created (mental model)
-
-1. **`profiles`** — one row per `auth.users` row (created by trigger).
-2. **`user_preferences`** — currency, locale, week start, onboarding flag (defaults on signup).
-3. **`categories`** — your app’s category rows, scoped by `user_id`.
-4. **`expenses`** — same fields as SQLite (`kind`, `pinned`, `space_id`, etc.), scoped by `user_id`.
-5. **RLS** — users can only read/write rows where `user_id = auth.uid()`.
-6. **Trigger `handle_new_user`** — on signup, inserts `profiles` + `user_preferences`.
-7. **Trigger `expenses_category_user_check`** — ensures `category_id` belongs to the same `user_id` (extra safety beyond RLS).
-
----
-
-## Part F — What we will do next in code (preview)
-
-These are the **next implementation steps** after the database exists (we’ll do them in order when you say go):
-
-1. Add `@supabase/supabase-js` + secure session storage adapter for Expo.
-2. Create `src/lib/supabase/client.ts` reading `EXPO_PUBLIC_*` env vars.
-3. Wire **Entry** / **Account** screens to sign up, sign in, sign out.
-4. After login: **upload** local SQLite → Supabase (categories, expenses, prefs), then **download** merge rules / conflict policy.
-5. Mark sync state in local `app_settings` so we don’t double-upload.
-
----
-
-## Troubleshooting
-
-| Issue | What to try |
-|--------|-------------|
-| `db push` asks for password | Use the DB password from project creation (A2); reset in Dashboard → Database if lost. |
-| Migration fails on trigger syntax | Replace `EXECUTE FUNCTION` with `EXECUTE PROCEDURE` in the migration file and re-run (or fix in SQL Editor). |
-| “permission denied for schema auth” | You ran only part of the SQL; run the **full** migration file including the `auth.users` trigger. |
-| Tables empty after signup | Sign up a test user; check **Table Editor** → `profiles` / `user_preferences` for a new row. |
-
----
-
-## One-command reminders (from repo root)
-
-```bash
-npx supabase@latest login
-npx supabase@latest link --project-ref <ref>
-npx supabase@latest db push
-```
-
-After you complete **Parts A–D**, say when you’re ready and we’ll start **Part F** in the app.
+Phase 3 (Budgets + Reports) can begin once §6 above (data sync) is at least *upload-complete*. Phase 3 doesn't strictly require sync to be 100% — local-only reports work — but if a user signs in mid-Phase-3 work, their data should already be flowing to the cloud.
