@@ -44,3 +44,7 @@ yarn-error.*
 # Supabase CLI
 supabase/.temp/
 supabase/.branches/
+
+# Claude Code — personal/local state (agents/ is shared and committed)
+.claude/settings.local.json
+.claude/agent-memory/
